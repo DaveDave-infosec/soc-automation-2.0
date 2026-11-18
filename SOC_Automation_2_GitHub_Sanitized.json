@@ -1,0 +1,253 @@
+{
+  "name": "SOC Automation 2.0 - Splunk Threat Detection & AI Triage",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1088,
+        -208
+      ],
+      "id": "168abb9c-39c0-42c3-b64b-53f688b59fcb",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "command": "sudo -n -u splunk /usr/local/bin/n8n-splunk-detection"
+      },
+      "type": "n8n-nodes-base.ssh",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        -208
+      ],
+      "id": "6a903fa3-878f-4539-a434-4b1afb2eb804",
+      "name": "Execute a command"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst detections = [];\n\nfor (const item of $input.all()) {\n  if (item.json.code !== 0) {\n    throw new Error(`SSH command failed: ${item.json.stderr}`);\n  }\n\n  const output = item.json.stdout || \"\";\n\n  for (const line of output.split(\"\\n\")) {\n    if (!line.trim()) continue;\n\n    const response = JSON.parse(line);\n\n    if (response.result) {\n      detections.push({\n        json: {\n          host: response.result.host,\n          source_ip: response.result.source_ip,\n          timestamp: response.result._time,\n          failed_attempts: Number(response.result.failed_attempts),\n          alert_type: \"Windows Failed Login\"\n        }\n      });\n    }\n  }\n}\n\nreturn detections;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        -208
+      ],
+      "id": "3e068241-eadb-489f-9e21-675b7a44b56a",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst publicIPs = [];\n\nfor (const item of $input.all()) {\n  const ip = String(item.json.source_ip || \"\").trim();\n  const parts = ip.split(\".\").map(Number);\n\n  // Validate IPv4 address\n  if (\n    parts.length !== 4 ||\n    parts.some(n => !Number.isInteger(n) || n < 0 || n > 255)\n  ) continue;\n\n  const [a, b] = parts;\n\n  // Exclude non-public IPv4 ranges\n  if (\n    a === 0 ||\n    a === 10 ||\n    a === 127 ||\n    a >= 224 ||\n    (a === 100 && b >= 64 && b <= 127) ||\n    (a === 169 && b === 254) ||\n    (a === 172 && b >= 16 && b <= 31) ||\n    (a === 192 && b === 168) ||\n    (a === 192 && b === 0) ||\n    (a === 192 && b === 0 && parts[2] === 2) ||\n    (a === 198 && (b === 18 || b === 19)) ||\n    (a === 198 && b === 51 && parts[2] === 100) ||\n    (a === 203 && b === 0 && parts[2] === 113)\n  ) continue;\n\n  publicIPs.push(item);\n}\n\nreturn publicIPs;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        -208
+      ],
+      "id": "72776f2c-4b32-4d35-9ce8-a75a02210857",
+      "name": "Filter Public IPs"
+    },
+    {
+      "parameters": {
+        "url": "https://api.abuseipdb.com/api/v2/check",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "ipAddress",
+              "value": "={{ $json.source_ip }}"
+            },
+            {
+              "name": "maxAgeInDays",
+              "value": "90"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -192,
+        -208
+      ],
+      "id": "8126af7c-402b-4559-b7a3-7803ea5f3078",
+      "name": "AbuseIPDB IP Reputation Check"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst results = [];\n\nfor (const item of $input.all()) {\n  const data = item.json.data;\n\n  if (!data || !data.ipAddress) {\n    throw new Error(\"Invalid AbuseIPDB response\");\n  }\n\n  const score = Number(data.abuseConfidenceScore ?? 0);\n  const reports = Number(data.totalReports ?? 0);\n\n  let risk_level = \"LOW\";\n\n  if (score >= 75) {\n    risk_level = \"HIGH\";\n  } else if (score >= 25) {\n    risk_level = \"MEDIUM\";\n  }\n\n  results.push({\n    json: {\n      source_ip: data.ipAddress,\n      abuse_confidence_score: score,\n      total_reports: reports,\n      country: data.countryCode ?? \"Unknown\",\n      last_reported: data.lastReportedAt ?? null,\n      risk_level: risk_level\n    }\n  });\n}\n\nreturn results;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        -208
+      ],
+      "id": "5d835cd7-3736-49b6-8cd6-dcd548c69ab6",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-5-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-5-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "\nYou are a Tier 1 SOC Security Analyst.\n\nAnalyze Windows failed-login detections and AbuseIPDB reputation data.\n\nYour responsibilities:\n1. Summarize the security event clearly.\n2. Assess the risk using the available evidence.\n3. Consider the failed-login count, source IP, abuse confidence score, and reputation reports.\n4. Recommend practical investigation and response actions.\n5. Keep the analysis concise and suitable for a Slack SOC alert.\n\nRules:\n- Do not invent evidence or attack details.\n- Do not assume failed logins prove a successful compromise.\n- A low AbuseIPDB score does not automatically mean an IP is safe.\n- Distinguish confirmed facts from possible explanations.\n- Never recommend automatic blocking without sufficient evidence.\n\nRespond using these headings:\nSummary:\nRisk Assessment:\nRecommended Actions:\n\n\n\nIf the hostname begins with SIMULATED-, explicitly identify the event as a simulated lab test. Do not present the source IP as a confirmed attacker or recommend blocking it based on the simulation.\n"
+            },
+            {
+              "content": "=\n{{ JSON.stringify({\n  detection: {\n    host: $('Code in JavaScript').item.json.host,\n    timestamp: $('Code in JavaScript').item.json.timestamp,\n    failed_attempts: $('Code in JavaScript').item.json.failed_attempts,\n    source_ip: $('Code in JavaScript').item.json.source_ip\n  },\n  reputation: $json\n}, null, 2) }}\n"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        240,
+        -208
+      ],
+      "id": "69704a8a-396a-4d6e-91ed-2734d89e3aad",
+      "name": "AI SOC Threat Assessment"
+    },
+    {
+      "parameters": {
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_YOUR_SLACK_CHANNEL_ID",
+          "mode": "id"
+        },
+        "text": "=\n{{ `${$('Code in JavaScript').item.json.host?.startsWith('SIMULATED-') ? '🧪 SIMULATED LAB TEST — SOC SECURITY ALERT' : '🚨 SOC SECURITY ALERT'}\n\nAlert: Windows Failed Login\nHost: ${$('Code in JavaScript').item.json.host}\nSource IP: ${$('Code in JavaScript').item.json.source_ip}\nFailed Attempts: ${$('Code in JavaScript').item.json.failed_attempts}\nDetection Time: ${$('Code in JavaScript').item.json.timestamp}\n\nABUSEIPDB INTELLIGENCE\nAbuse Score: ${$('Code in JavaScript1').item.json.abuse_confidence_score}/100\nTotal Reports: ${$('Code in JavaScript1').item.json.total_reports}\nCountry: ${$('Code in JavaScript1').item.json.country}\nRisk Level: ${$('Code in JavaScript1').item.json.risk_level}\n\nAI SOC ASSESSMENT\n${$json.output?.[0]?.content?.[0]?.text ?? 'Assessment unavailable'}\n\nSOC Automation 2.0 | Splunk + AbuseIPDB + OpenAI` }}\n",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.7,
+      "position": [
+        608,
+        -208
+      ],
+      "id": "a4f0414d-460c-4925-8920-198edc0afcfe",
+      "name": "Send SOC Alert to Slack"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Execute a command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute a command": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Filter Public IPs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter Public IPs": {
+      "main": [
+        [
+          {
+            "node": "AbuseIPDB IP Reputation Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AbuseIPDB IP Reputation Check": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "AI SOC Threat Assessment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI SOC Threat Assessment": {
+      "main": [
+        [
+          {
+            "node": "Send SOC Alert to Slack",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
