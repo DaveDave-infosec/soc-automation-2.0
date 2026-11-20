@@ -91,7 +91,30 @@ The exported IP filter is a **simplified IPv4-only lab filter**, not a complete 
 
 ### Screenshots
 
-Evidence screenshots were captured during testing (Splunk events, n8n execution graph, AbuseIPDB, AI response, and the simulated Slack alert). They are **not yet included in this repository**. No screenshots have been fabricated or represented as committed evidence.
+The following seven screenshots are committed to this repository. The first two show **real local Windows failed-logon events**. The workflow and Slack alert screenshots show a **separately simulated public-IP test**, not an actual external attack.
+
+#### 1. Genuine Windows failed-logon detection in Splunk
+![Three Event ID 4625 failed logons grouped in Splunk](01_splunk_failed_logins_detected.png)
+
+#### 2. Source IP extracted from genuine local logons
+![Windows failed logon events with loopback source IP 127.0.0.1](02_splunk_loopback_source_ip.png)
+
+#### 3. Eight-node simulated end-to-end workflow
+![All eight n8n nodes completing simulated pipeline](03_n8n_full_eight_node_simulated_execution.png)
+
+#### 4. Simulated alert delivered to Slack
+![Simulated lab alert details in soc-alerts](04_slack_simulated_alert_summary.png)
+
+#### 5. AI-assisted SOC assessment
+![AI assessment in simulated Slack alert](05_slack_ai_assessment.png)
+
+#### 6. SOC investigation recommendations
+![Recommended actions in simulated Slack alert](06_slack_recommendations.png)
+
+#### 7. Scheduled workflow execution history
+![n8n published schedule succeeding on five-minute intervals](07_n8n_published_schedule_execution_history.png)
+
+See [the evidence index](evidence/README.md) for the individual test descriptions.
 
 ## Reproducing the lab
 
